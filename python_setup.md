@@ -12,7 +12,7 @@ If you are not familiar with this process, use [these instructions](https://help
 3. Open an Anaconda prompt window (in windows, click ‘start’ then use the search window), then create a virtual environment using the following as an example (here I use ‘DL_track’ as the virtual environment name, but this can be anything):  
 `conda create --name DL_track python=3.6.8`  
 (If prompted, type `y` to confirm that the relevant packages can be installed)
-4. Activate the virtual environment by typing activate DL_track (where DL_track is replaced by the name you chose). 
+4. Activate the virtual environment by typing `activate DL_track` (where DL_track is replaced by the name you chose). 
 5. cd to where you have saved the project folder, e.g. by typing `cd c:/DL_Track`
 6. type the following command:  `pip install -r requirements.txt`  
 (this step may take some time)
