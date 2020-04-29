@@ -16,7 +16,7 @@ If you are not familiar with this process, use [these instructions](https://help
 5. cd to where you have saved the project folder, e.g. by typing `cd c:/DL_Track`
 6. type the following command:  `pip install -r requirements.txt`  
 (this step may take some time)
-7. type jupyter notebook and Jupyter notebooks should load in your browser
+7. type `jupyter notebook` and Jupyter notebooks should load in your browser
 
 
 ## Usage
