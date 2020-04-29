@@ -1,7 +1,7 @@
 # DL_Track
 A deep learning approach for analysing muscle architecture from musculoskeletal ultrasound images.
 
-To start using this software, first use the [setup instructions](https://github.com/njcronin/DL_Track/blob/master/python_setup).
+To start using this software, first use the [setup instructions](https://github.com/njcronin/DL_Track/blob/master/python_setup.md).
 
 To train your own model, you can add your own images and labels to those that are provided, or you can create your own dataset ([labelling instructions can be found here](https://github.com/njcronin/DL_Track/blob/master/Labelling_Instructions.pdf)). Then use the ['Model_Training.ipynb'](https://github.com/njcronin/DL_Track/blob/master/Model_Training.ipynb) notebook to train your model (NOTE: Use a GPU!).
 
