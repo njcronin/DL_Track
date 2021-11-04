@@ -9,7 +9,7 @@ To use my trained models to analyse your own data, simply run the ['Inference_Si
 
 If you don't have access to a GPU or couldn't get the main version working, try using the colab version ([instructions here](https://github.com/njcronin/DL_Track/blob/master/colab_instructions.md)). This is more limited, but most of the functionality is the same.
 
-If you find this work useful, please cite the corresponding paper: Link coming soon
+If you find this work useful, please cite the corresponding paper: https://arxiv.org/abs/2009.04790
 
 ![DL_Track image](./home_im.png)
 
