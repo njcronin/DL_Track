@@ -110,3 +110,4 @@ def calibrateDistanceStatic(nonflipped_img, spacing: str):
     scale_statement = '10 mm corresponds to ' + str(calib_dist) + ' pixels'
 
     return calib_dist, imgscale, scale_statement
+    

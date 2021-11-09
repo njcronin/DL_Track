@@ -1,36 +1,27 @@
 """Python module to evaluate longitudinal US images"""
 
-from __future__ import division 
+from __future__ import division
+
+import warnings
+import time
+import glob
 import os
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-plt.style.use("ggplot")
-get_ipython().run_line_magic('matplotlib', 'inline')
 
-import re
-
-import glob
-import cv2
-import tensorflow as tf
-
-from IPython.core.debugger import set_trace
 from matplotlib.backends.backend_pdf import PdfPages
 from skimage.transform import resize
-from skimage.morphology import skeletonize
-from scipy.signal import resample, savgol_filter, butter, filtfilt
-from PIL import Image, ImageDraw
-from keras import backend as K
-from keras.models import Model, load_model
-from keras.preprocessing.image import ImageDataGenerator, array_to_img, img_to_array, load_img
-from pathlib import Path
+from keras.preprocessing.image import img_to_array, load_img
+from do_calculations import doCalculations, predictM
+from calibrate import calibrateDistanceStatic, calibrateDistanceManually
 
 
 def importAndReshapeImage(pathToImage, flip):
     """Define the image to analyse, import and reshape the image.
 
     Arguments:
-        Path to image that should be analyzed, 
+        Path to image that should be analyzed,
         Flag whether image should be flipped.
 
     Returns:
@@ -55,13 +46,51 @@ def importAndReshapeImage(pathToImage, flip):
         img = np.fliplr(img)
     img_copy = img
     img = img_to_array(img)
-    h = img.shape[0]
-    w = img.shape[1]
+    height = img.shape[0]
+    width = img.shape[1]
     img = np.reshape(img,[-1, h, w,1])
     img = resize(img, (1, 512, 512, 1), mode = 'constant', preserve_range = True)
     img = img/255.0
-    img2 = img
-    return img, img_copy, nonflippedImg, h, w, filename
+    return img, img_copy, nonflippedImg, height, width, filename
+
+
+def getSettings(apo_treshold: float, fasc_threshold: float, fasc_cont_thresh: int,
+                 min_width: int, curvature: int, min_pennation: int, max_pennation: int):
+    """Function to create dict with analysis settings.
+
+    Arguments:
+        Threshold for aponeurosis detection,
+        Threshold for fasicle detection,
+        Threshould for fascile contours,
+        Minimal allowed width between aponeuroses (mm),
+        Determined fascicle curvature,
+        Minimal allowed pennation angle (°),
+        Maximal allowed penntaoin angle (°).
+
+    Returns:
+        Dictionary containing settings.
+
+    Example:
+        >>>getSettings(0.2, 0.5, 40, 60, 1, 14, 40)
+        {"apo_treshold": 0.2,
+         "fasc_threshold": 0.5,
+         "fasc_cont_thresh": 40,
+         "min_width": 60,
+         "curvature": 1,
+         "min_pennation": 14,
+         "max_pennation": 40
+        }
+    """
+    dic = {"apo_treshold": apo_treshold,
+           "fasc_threshold": fasc_threshold,
+           "fasc_cont_thresh": fasc_cont_thresh,
+           "min_width": min_width,
+           "curvature": curvature,
+           "min_pennation": min_pennation,
+           "max_pennation": max_pennation
+           }
+
+    return dic
 
 
 def compileSaveResults(rootpath: str, dataframe: pd.DataFrame):
@@ -94,11 +123,11 @@ def compileSaveResults(rootpath: str, dataframe: pd.DataFrame):
 def getFlipFlagsList(pathname):
     """Gets flags whether to flip an image or not. These are 0 or 1.
 
-    Arguments: 
+    Arguments:
         Path to Flipflahg file
 
-    Returns: 
-        List containing flip flags 
+    Returns:
+        List containing flip flags
     """
     flipFlags = []
     file = open(pathname, 'r')
@@ -109,8 +138,8 @@ def getFlipFlagsList(pathname):
     return flipFlags
 
 
-def calculateBatch(rootpath: str, filetype: str, modelpath: str, flipFilePath: str,
-                    spacing: int, muscle: str, scaling: str, dic: dict, gui):
+def calculateBatch(rootpath: str, filetype: str, apo_modelpath: str, fasc_modelpath: str,
+                   flipFilePath: str, spacing: int, scaling: str, dic: dict, gui):
     """Calculates area predictions for batches of (EFOV) US images
         not containing a continous scaling line.
 
@@ -121,10 +150,10 @@ def calculateBatch(rootpath: str, filetype: str, modelpath: str, flipFilePath: s
             path to model used for predictions,
             distance between (vertical) scaling lines (mm),
             analyzed muscle,
-            scaling type, 
+            scaling type,
             dictionary containing settings for calculations.
     """
-    list_of_files = glob.glob(rootpath + filetype, recursive=True)
+    listOfFiles = glob.glob(rootpath + filetype, recursive=True)
     flipFlags = getFlipFlagsList(flipFilePath)
     dataframe = pd.DataFrame(columns=["File", "Fasicle Length", "Pennation Angle", "Midthick",
                                       "x_low1", "x_high1"])
@@ -132,52 +161,55 @@ def calculateBatch(rootpath: str, filetype: str, modelpath: str, flipFilePath: s
 
     with PdfPages(rootpath + '/ResultImages.pdf') as pdf:
 
-        if(len(listOfFiles) == len(flipFlags)):
+        if len(listOfFiles) == len(flipFlags):
 
             try:
             #start_time = time.time()
-            
-                for imagepath in list_of_files:
+
+                for imagepath in listOfFiles:
                     if gui.should_stop:
                         # there was an input to stop the calculations
                         break
 
                     # load image
-                    imported = import_image(imagepath, int(flip))
-                    img, nonflipped_img, height, width, filename = imported
+                    imported = importAndReshapeImage(imagepath, int(flip))
+                    img, img_copy, nonflipped_img, height, width, filename = imported
                     # get flipflag
                     flip = flipFlags.pop(0)
 
                     if scaling == "Bar":
-                        calibrate_fn = calibrateDistanceDtatic
+                        calibrate_fn = calibrateDistanceStatic
                         # find length of the scaling line
-                        calib_dist, imgscale, scale_statement = calibrate_fn(nonflipped_img, spacing)
+                        calibDist, imgscale, scale_statement = calibrate_fn(nonflipped_img, spacing)
                         # check for StaticScalingError
-                        if calib_dist is None:
+                        if calibDist is None:
                             fail = f"Scalingbars not found in {imagepath}"
                             failed_files.append(fail)
                             warnings.warn("Image fails with StaticScalingError")
                             continue
 
-                        # predict apos and fasicles
-                        fasc_l, pennation, x_low1, x_high1, midthick, fig = doCalculations(img, img_copy, h, w, 
-                                                                                           calibDist, spacing, dic)
+                        # Get predictions
+                        pred_apo_t, pred_fasc_t = predictM(apo_modelpath, fasc_modelpath, img, height, width, dic)
 
-                        if fascl_l is None: 
+                        # predict apos and fasicles
+                        fasc_l, pennation, x_low1, x_high1, midthick, fig = doCalculations(height, width, calibDist, spacing,
+                                                                                           pred_apo_t, pred_fasc_t, dic)
+
+                        if fasc_l is None:
                             fail = f"No two aponeuroses found in {imagepath}"
                             failed_files.append(fail)
                             warnings.warn("Image fails with NoTwoAponeurosesError")
                             continue
 
                     else:
-                        calibrate_fn = calibrate_distance_manually
-                        calib_dist = calibrate_fn(nonflipped_img, spacing)
+                        calibrate_fn = calibrateDistanceManually
+                        calibDist = calibrate_fn(nonflipped_img, spacing)
 
                         # predict Apos and fasicles
-                        fasc_l, pennation, x_low1, x_high1, midthick, fig = doCalculations(img, img_copy, h, w, 
+                        fasc_l, pennation, x_low1, x_high1, midthick, fig = doCalculations(img, img_copy, height, width,
                                                                                            calibDist, spacing, dic)
 
-                        if fascl_l is None: 
+                        if fasc_l is None:
                             fail = f"No two aponeuroses found in {imagepath}"
                             failed_files.append(fail)
                             warnings.warn("Image fails with NoTwoAponeurosesError")
@@ -185,7 +217,7 @@ def calculateBatch(rootpath: str, filetype: str, modelpath: str, flipFilePath: s
 
                     # append results to dataframe
                     dataframe = dataframe.append({"File": filename,
-                                                  "Fasicle Length": fascl_l,
+                                                  "Fasicle Length": fasc_l,
                                                   "Pennation Angle": pennation,
                                                   "Midthick": midthick,
                                                   "x_low1": x_low1,
@@ -201,7 +233,7 @@ def calculateBatch(rootpath: str, filetype: str, modelpath: str, flipFilePath: s
 
             finally:
                 # save predicted area results
-                compile_save_results(rootpath, dataframe)
+                compileSaveResults(rootpath, dataframe)
                 # write failed images in file
                 if len(failed_files) >= 1:
                     file = open(rootpath + "/failed_images.txt", "w")
@@ -213,6 +245,4 @@ def calculateBatch(rootpath: str, filetype: str, modelpath: str, flipFilePath: s
                 gui.is_running = False
 
         else:
-            print("Warning: number of flipFlags (" + str(len(flipFlags)) +") doesn\'t match number of images (" + str(len(listOfFiles)) + ")! Calculations aborted.") 
-
-
+            print("Warning: number of flipFlags (" + str(len(flipFlags)) +") doesn\'t match number of images (" + str(len(listOfFiles)) + ")! Calculations aborted.")

@@ -1,71 +1,20 @@
 """Python function to calculate aponeurosis and fascicles"""
 
-from __future__ import division 
-import glob
+from __future__ import division
+from skimage.morphology import skeletonize
+from scipy.signal import savgol_filter
+from apo_model_long import ApoModels
+
 import cv2
-import tensorflow as tf
-import os
-import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 plt.style.use("ggplot")
-get_ipython().run_line_magic('matplotlib', 'inline')
-import re
-from IPython.core.debugger import set_trace
-from matplotlib.backends.backend_pdf import PdfPages
-from skimage.transform import resize
-from skimage.morphology import skeletonize
-from scipy.signal import resample, savgol_filter, butter, filtfilt
-from PIL import Image, ImageDraw
-from apo_model_long import ApoModels
-from keras import backend as K
-from keras.models import Model, load_model
-from keras.preprocessing.image import ImageDataGenerator, array_to_img, img_to_array, load_img
-from pathlib import Path
 
-
-def getSettings(apo_treshold: float, fasc_threshold: float, fasc_cont_thresh: int, 
-                 min_width: int, curvature: int, min_pennation: int, max_pennation: int): 
-    """Function to create dict with analysis settings. 
-
-    Arguments: 
-        Threshold for aponeurosis detection, 
-        Threshold for fasicle detection, 
-        Threshould for fascile contours, 
-        Minimal allowed width between aponeuroses (mm), 
-        Determined fascicle curvature, 
-        Minimal allowed pennation angle (°), 
-        Maximal allowed penntaoin angle (°). 
-
-    Returns: 
-        Dictionary containing settings
-
-    Example: 
-        >>>getSettings(0.2, 0.5, 40, 60, 1, 14, 40)
-        {"apo_treshold": 0.2,
-         "fasc_threshold": 0.5, 
-         "fasc_cont_thresh": 40,
-         "min_width": 60,
-         "curvature": 1,
-         "min_pennation": 14,
-         "max_pennation": 40
-        }
-    """    
-    dic = {"apo_treshold": apo_treshold,
-           "fasc_threshold": fasc_threshold, 
-           "fasc_cont_thresh": fasc_cont_thresh,
-           "min_width": min_width,
-           "curvature": curvature,
-           "min_pennation": min_pennation,
-           "max_pennation": max_pennation
-           }
-
-    return dic
 
 def sort_contours(cnts):
     """Function to sort contours from proximal to distal (the bounding boxes are not used)
 
-    Arguments: 
+    Arguments:
         List of contours.
     """
     # initialize the reverse flag and sort index
@@ -79,8 +28,8 @@ def sort_contours(cnts):
 def contour_edge(edge, contour):
     """Find only the coordinates representing one edge of a contour. edge: T (top) or B (bottom)
 
-    Arguments: 
-        Variable whether top ot bottom edge, 
+    Arguments:
+        Variable whether top ot bottom edge,
         List of contours.
     """
     pts = list(contour)
@@ -118,7 +67,7 @@ def intersection(L1, L2):
         return x,y
     else:
         return False
-        
+
 def distFunc(x1, y1, x2, y2):
     """Function to compute the distance between 2 x,y points.
 
@@ -130,39 +79,52 @@ def distFunc(x1, y1, x2, y2):
 
     return np.sqrt(xdist + ydist)
 
-def doCalculations(img, img_copy, h, w, calibDist, spacing, dictionary):
-    """Function to compute aponeuroses and fasicles. 
+def predictM(apo_modelpath: str, fasc_modelpath:str, img, height: int, 
+             width: int, dictionary: dict):
+    """Function to predict and locate aponeuroses and fasicles.
 
-    Arguments: 
-        Input image, 
-        Copy of input image,
-        Height of input image, 
-        width of input image, 
-        Detected difference between scaling lines (Pixel), 
-        Actual distance between scaling lines (mm), 
-        Dictionary with analysis settings
+    Attributes:
+        Path to aponeurosis model,
+        path to fasicle model,
+        originale image,
+        image heigth (pixel),
+        image width (pixel),
+        dictionary containing settings.
+
+    Returns:
+        Images containing predictions.
     """
     # Get settings
     dic = dictionary
-    
-    # Define list variables
-    xs = []
-    ys = []
-    fas_ext = []
-    fasc_l = []
-    pennation = []
-    x_low1 = []
-    x_high1 = []
 
     # Get models
-    apo_models = ApoModels(apo_modelpath, fasc_modelpath, 
-                           dic["apo_treshold"], dic["fasc_threshold"]) 
+    apo_models = ApoModels(apo_modelpath, fasc_modelpath,
+                           dic["apo_treshold"], dic["fasc_threshold"])
 
     # Predict aponeurosis and fascicles
     pred_apo_t, pred_fasc_t = apo_models.predict(img, height, width)
 
+    return pred_apo_t, pred_fasc_t
+
+
+def doCalculations(h: str, w: str, calibDist: int, spacing: int,
+                   pred_apo_t, pred_fasc_t, dictionary: dict):
+    """Function to compute aponeuroses and fasicles.
+
+    Arguments:
+        Height of input image,
+        width of input image,
+        Detected difference between scaling lines (Pixel),
+        Actual distance between scaling lines (mm),
+        Image with predicted Aponeuroses, 
+        Image with predicted Fasicles,
+        Dictionary with analysis settings.
+    """
+    # Get settings
+    dic = dictionary
+
     # Compute contours to identify the aponeuroses
-    _, thresh = cv2.threshold(pred_apo_t, 0, 255, cv2.THRESH_BINARY) 
+    _, thresh = cv2.threshold(pred_apo_t, 0, 255, cv2.THRESH_BINARY)
     thresh = thresh.astype('uint8')
     contours, hierarchy = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
@@ -212,7 +174,7 @@ def doCalculations(img, img_copy, h, w, calibDist, spacing, dictionary):
 
     maskT[maskT > 0] = 1
     skeleton = skeletonize(maskT).astype(np.uint8)
-    kernel = np.ones((3,7), np.uint8) 
+    kernel = np.ones((3,7), np.uint8)
     dilate = cv2.dilate(skeleton, kernel, iterations=15)
     erode = cv2.erode(dilate, kernel, iterations=10)
 
@@ -254,13 +216,13 @@ def doCalculations(img, img_copy, h, w, calibDist, spacing, dictionary):
         Alist = sorted(Alist)
         Alen = len(list(set(upp_x).intersection(low_x))) # How many values overlap between x-axes
         A1 = int(Alist[0] + (.33 * Alen))
-        A2 = int(Alist[0] + (.66 * Alen)) 
+        A2 = int(Alist[0] + (.66 * Alen))
         mid = int((A2-A1) / 2 + A1)
         mindist = 10000
         upp_ind = np.where(upp_x==mid)
 
         if upp_ind == len(upp_x):
-                upp_ind -= 1
+            upp_ind -= 1
 
         for val in range(A1, A2):
             if val >= len(low_x):
@@ -290,35 +252,24 @@ def doCalculations(img, img_copy, h, w, calibDist, spacing, dictionary):
         new_Y_LA = h(new_X_LA)
 
         # Compute contours to identify fascicles/fascicle orientation
-        _, threshF = cv2.threshold(pred_fasc_t, 0, 255, cv2.THRESH_BINARY) 
+        _, threshF = cv2.threshold(pred_fasc_t, 0, 255, cv2.THRESH_BINARY)
         threshF = threshF.astype('uint8')
         contoursF, hierarchy = cv2.findContours(threshF, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         # Remove any contours that are very small
-    #     contours_re = []
         maskF = np.zeros(threshF.shape,np.uint8)
         for contour in contoursF: # Remove any contours that are very small
             if len(contour) > dic["fasc_cont_thresh"]:
-    #             contours_re.append(contour)
-                cv2.drawContours(maskF,[contour],0,255,-1) 
+                cv2.drawContours(maskF,[contour],0,255,-1)
 
-        # Only include fascicles within the region of the 2 aponeuroses  
-        mask_Fi = maskF & ex_mask 
+        # Only include fascicles within the region of the 2 aponeuroses
+        mask_Fi = maskF & ex_mask
         contoursF2, hierarchy = cv2.findContours(mask_Fi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
-        # maskF = np.zeros(threshF.shape,np.uint8)
-    #     contoursF3 = []
-    #     for contour in contoursF2:
-    #         if len(contour) > dic["fasc_cont_thresh"]:
-    #     #         cv2.drawContours(maskF,[contour],0,255,-1)
-    #             contoursF3.append(contour)
-        contoursF3 = [i for i in contoursF2 if len(i) > dic["fasc_cont_thresh"]
+        #contoursF3 = [i for i in contoursF2 if len(i) > dic["fasc_cont_thresh"]]
 
         fig = plt.figure(figsize=(25,25))
 
-        xs = []
-        ys = []
-        fas_ext = []
         fasc_l = []
         pennation = []
         x_low1 = []
@@ -362,12 +313,12 @@ def doCalculations(img, img_copy, h, w, calibDist, spacing, dictionary):
                     pennation.append(Apoangle-FascAng)
                     x_low1.append(coordsX[0].astype('int32'))
                     x_high1.append(coordsX[-1].astype('int32'))
-                    coords = np.array(list(zip(coordsX.astype('int32'), coordsY.astype('int32'))))
+                    #coords = np.array(list(zip(coordsX.astype('int32'), coordsY.astype('int32'))))
                     plt.plot(coordsX,coordsY,':w', linewidth = 6)
         # cv2.polylines(imgT, [coords], False, (20, 15, 200), 3)
 
-        # DISPLAY THE RESULTS      
-        plt.imshow(img_copy, cmap='gray')
+        # DISPLAY THE RESULTS
+        #plt.imshow(img_copy, cmap='gray')
         plt.plot(low_x,low_y_new, marker='p', color='w', linewidth = 15) # Plot the aponeuroses
         plt.plot(upp_x,upp_y_new, marker='p', color='w', linewidth = 15)
 

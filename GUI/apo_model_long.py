@@ -60,7 +60,7 @@ class ApoModels:
         >>> # get predictions only
         >>> pred_apo, pred_fas = apo_model.predict(img)
     """
-    def __init__(self, apo_model_path:s tr, fasc_model_path: str, apo_threshold: float,
+    def __init__(self, apo_model_path: str, fasc_model_path: str, apo_threshold: float,
     			 fasc_threshold: float):
     	self.apo_model_path = apo_model_path
     	self.model_apo = load_model(
