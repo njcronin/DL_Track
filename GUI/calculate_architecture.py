@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from skimage.transform import resize
 from keras.preprocessing.image import img_to_array, load_img
-from do_calculations import doCalculations, predictM
+from do_calculations import doCalculations
 from calibrate import calibrateDistanceStatic, calibrateDistanceManually
 
 
@@ -40,7 +40,6 @@ def importAndReshapeImage(pathToImage, flip):
     image_add = pathToImage
     filename = os.path.splitext(os.path.basename(image_add))[0]
     img = load_img(image_add, color_mode='grayscale')
-    print("Loaded image at " + pathToImage)
     nonflippedImg = img
     if flip == 1:
         img = np.fliplr(img)
@@ -48,49 +47,10 @@ def importAndReshapeImage(pathToImage, flip):
     img = img_to_array(img)
     height = img.shape[0]
     width = img.shape[1]
-    img = np.reshape(img,[-1, h, w,1])
+    img = np.reshape(img,[-1, height, width,1])
     img = resize(img, (1, 512, 512, 1), mode = 'constant', preserve_range = True)
     img = img/255.0
     return img, img_copy, nonflippedImg, height, width, filename
-
-
-def getSettings(apo_treshold: float, fasc_threshold: float, fasc_cont_thresh: int,
-                 min_width: int, curvature: int, min_pennation: int, max_pennation: int):
-    """Function to create dict with analysis settings.
-
-    Arguments:
-        Threshold for aponeurosis detection,
-        Threshold for fasicle detection,
-        Threshould for fascile contours,
-        Minimal allowed width between aponeuroses (mm),
-        Determined fascicle curvature,
-        Minimal allowed pennation angle (°),
-        Maximal allowed penntaoin angle (°).
-
-    Returns:
-        Dictionary containing settings.
-
-    Example:
-        >>>getSettings(0.2, 0.5, 40, 60, 1, 14, 40)
-        {"apo_treshold": 0.2,
-         "fasc_threshold": 0.5,
-         "fasc_cont_thresh": 40,
-         "min_width": 60,
-         "curvature": 1,
-         "min_pennation": 14,
-         "max_pennation": 40
-        }
-    """
-    dic = {"apo_treshold": apo_treshold,
-           "fasc_threshold": fasc_threshold,
-           "fasc_cont_thresh": fasc_cont_thresh,
-           "min_width": min_width,
-           "curvature": curvature,
-           "min_pennation": min_pennation,
-           "max_pennation": max_pennation
-           }
-
-    return dic
 
 
 def compileSaveResults(rootpath: str, dataframe: pd.DataFrame):
@@ -138,8 +98,9 @@ def getFlipFlagsList(pathname):
     return flipFlags
 
 
-def calculateBatch(rootpath: str, filetype: str, apo_modelpath: str, fasc_modelpath: str,
-                   flipFilePath: str, spacing: int, scaling: str, dic: dict, gui):
+def calculateBatch(rootpath: str, apo_modelpath: str, fasc_modelpath: str, flipFilePath: str, filetype: str,
+                    scaling: str, spacing: int, apo_treshold: float, fasc_threshold: float, fasc_cont_thresh: int,
+                   min_width: int, curvature: int, min_pennation: int, max_pennation: int, gui):
     """Calculates area predictions for batches of (EFOV) US images
         not containing a continous scaling line.
 
@@ -147,16 +108,33 @@ def calculateBatch(rootpath: str, filetype: str, apo_modelpath: str, fasc_modelp
             Path to root directory of images,
             type of image files,
             path to txt file containing flipping information for images,
-            path to model used for predictions,
+            path to model used for apo predictions,
+            path to model used for fasc predictions,
             distance between (vertical) scaling lines (mm),
-            analyzed muscle,
             scaling type,
-            dictionary containing settings for calculations.
+            Threshold for aponeurosis detection,
+            Threshold for fasicle detection,
+            Threshould for fascile contours,
+            Minimal allowed width between aponeuroses (mm),
+            Determined fascicle curvature,
+            Minimal allowed pennation angle (°),
+            Maximal allowed penntaoin angle (°).
+        Returns:
+            Pdf containing images with predictions,
+            Excel sheet containing values.
+
     """
     listOfFiles = glob.glob(rootpath + filetype, recursive=True)
     flipFlags = getFlipFlagsList(flipFilePath)
-    dataframe = pd.DataFrame(columns=["File", "Fasicle Length", "Pennation Angle", "Midthick",
-                                      "x_low1", "x_high1"])
+    dataframe = pd.DataFrame(columns=["File", "Fasicle Length", "Pennation Angle", "Midthick"])
+    dic = {"apo_treshold": apo_treshold,
+           "fasc_threshold": fasc_threshold,
+           "fasc_cont_thresh": fasc_cont_thresh,
+           "min_width": min_width,
+           "curvature": curvature,
+           "min_pennation": min_pennation,
+           "max_pennation": max_pennation
+           }
     failed_files = []
 
     with PdfPages(rootpath + '/ResultImages.pdf') as pdf:
@@ -171,11 +149,11 @@ def calculateBatch(rootpath: str, filetype: str, apo_modelpath: str, fasc_modelp
                         # there was an input to stop the calculations
                         break
 
+					# get flipflag
+                    flip = flipFlags.pop(0)
                     # load image
                     imported = importAndReshapeImage(imagepath, int(flip))
                     img, img_copy, nonflipped_img, height, width, filename = imported
-                    # get flipflag
-                    flip = flipFlags.pop(0)
 
                     if scaling == "Bar":
                         calibrate_fn = calibrateDistanceStatic
@@ -188,12 +166,9 @@ def calculateBatch(rootpath: str, filetype: str, apo_modelpath: str, fasc_modelp
                             warnings.warn("Image fails with StaticScalingError")
                             continue
 
-                        # Get predictions
-                        pred_apo_t, pred_fasc_t = predictM(apo_modelpath, fasc_modelpath, img, height, width, dic)
-
                         # predict apos and fasicles
-                        fasc_l, pennation, x_low1, x_high1, midthick, fig = doCalculations(height, width, calibDist, spacing,
-                                                                                           pred_apo_t, pred_fasc_t, dic)
+                        fasc_l, pennation, x_low1, x_high1, midthick, fig = doCalculations(img, img_copy, height, width, calibDist,
+                                                                                           spacing, apo_modelpath, fasc_modelpath, dic)
 
                         if fasc_l is None:
                             fail = f"No two aponeuroses found in {imagepath}"
@@ -206,8 +181,8 @@ def calculateBatch(rootpath: str, filetype: str, apo_modelpath: str, fasc_modelp
                         calibDist = calibrate_fn(nonflipped_img, spacing)
 
                         # predict Apos and fasicles
-                        fasc_l, pennation, x_low1, x_high1, midthick, fig = doCalculations(img, img_copy, height, width,
-                                                                                           calibDist, spacing, dic)
+                        fasc_l, pennation, x_low1, x_high1, midthick, fig = doCalculations(img, img_copy, height, width, calibDist,
+                                                                                           spacing, apo_modelpath, fasc_modelpath, dic)
 
                         if fasc_l is None:
                             fail = f"No two aponeuroses found in {imagepath}"
@@ -217,11 +192,9 @@ def calculateBatch(rootpath: str, filetype: str, apo_modelpath: str, fasc_modelp
 
                     # append results to dataframe
                     dataframe = dataframe.append({"File": filename,
-                                                  "Fasicle Length": fasc_l,
-                                                  "Pennation Angle": pennation,
-                                                  "Midthick": midthick,
-                                                  "x_low1": x_low1,
-                                                  "x_high1": x_high1},
+                                                  "Fasicle Length": np.median(fasc_l),
+                                                  "Pennation Angle": np.median(pennation),
+                                                  "Midthick": midthick},
                                                   ignore_index=True)
 
                     # save figures

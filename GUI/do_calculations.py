@@ -4,12 +4,34 @@ from __future__ import division
 from skimage.morphology import skeletonize
 from scipy.signal import savgol_filter
 from apo_model_long import ApoModels
-
+from cv2 import arcLength, findContours, RETR_LIST, CHAIN_APPROX_SIMPLE
+from skimage.transform import resize
+from skimage import morphology, measure
+from keras import backend as K
+from keras.models import load_model 
+ 
+import tensorflow as tf
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 plt.style.use("ggplot")
 
+
+def IoU(y_true, y_pred, smooth=1):
+    """Computes intersection over union (IoU), a measure of labelling accuracy.
+
+    Arguments:
+        The ground-truth bit-mask,
+        The predicted bit-mask,
+        A smoothing parameter,
+
+    Returns:
+        Intersection over union scores.
+    """
+    intersection = K.sum(K.abs(y_true * y_pred), axis=-1)
+    union = K.sum(y_true, -1) + K.sum(y_pred, -1) - intersection
+    iou = (intersection + smooth) / (union + smooth)
+    return iou
 
 def sort_contours(cnts):
     """Function to sort contours from proximal to distal (the bounding boxes are not used)
@@ -79,52 +101,59 @@ def distFunc(x1, y1, x2, y2):
 
     return np.sqrt(xdist + ydist)
 
-def predictM(apo_modelpath: str, fasc_modelpath:str, img, height: int, 
-             width: int, dictionary: dict):
-    """Function to predict and locate aponeuroses and fasicles.
-
-    Attributes:
-        Path to aponeurosis model,
-        path to fasicle model,
-        originale image,
-        image heigth (pixel),
-        image width (pixel),
-        dictionary containing settings.
-
-    Returns:
-        Images containing predictions.
-    """
-    # Get settings
-    dic = dictionary
-
-    # Get models
-    apo_models = ApoModels(apo_modelpath, fasc_modelpath,
-                           dic["apo_treshold"], dic["fasc_threshold"])
-
-    # Predict aponeurosis and fascicles
-    pred_apo_t, pred_fasc_t = apo_models.predict(img, height, width)
-
-    return pred_apo_t, pred_fasc_t
-
-
-def doCalculations(h: str, w: str, calibDist: int, spacing: int,
-                   pred_apo_t, pred_fasc_t, dictionary: dict):
+def doCalculations(img, img_copy, h: str, w: str, calibDist: int, spacing: int,
+                   apo_modelpath: str, fasc_modelpath: str, dictionary: dict):
     """Function to compute aponeuroses and fasicles.
 
     Arguments:
+        Copy of input  for plotting,
         Height of input image,
         width of input image,
         Detected difference between scaling lines (Pixel),
         Actual distance between scaling lines (mm),
-        Image with predicted Aponeuroses, 
+        Image with predicted Aponeuroses,
         Image with predicted Fasicles,
         Dictionary with analysis settings.
     """
     # Get settings
     dic = dictionary
 
+    # Get variables from dictionary
+    fasc_cont_thresh = int(dic["fasc_cont_thresh"])
+    min_width = int(dic["min_width"])
+    max_pennation = int(dic["max_pennation"])
+    min_pennation = int(dic["min_pennation"])
+    apo_threshold = float(dic["apo_treshold"])
+    fasc_threshold = float(dic["fasc_threshold"])
+
+    #load apo model
+    model_apo = load_model(apo_modelpath, custom_objects={'IoU': IoU})
+    pred_apo = model_apo.predict(img)
+    pred_apo_t = (pred_apo > apo_threshold).astype(np.uint8) # SET APO THRESHOLD
+    pred_apo = resize(pred_apo, (1, h, w,1))
+    pred_apo = np.reshape(pred_apo, (h, w))
+    pred_apo_t = resize(pred_apo_t, (1, h, w,1))
+    pred_apo_t = np.reshape(pred_apo_t, (h, w))
+
+    # load the fascicle model
+    modelF = load_model(fasc_modelpath, custom_objects={'IoU': IoU})
+    pred_fasc = modelF.predict(img)
+    pred_fasc_t = (pred_fasc > fasc_threshold).astype(np.uint8) # SET FASC THRESHOLD
+    pred_fasc = resize(pred_fasc, (1, h, w,1))
+    pred_fasc = np.reshape(pred_fasc, (h, w))
+    pred_fasc_t = resize(pred_fasc_t, (1, h, w,1))
+    pred_fasc_t = np.reshape(pred_fasc_t, (h, w))
+
+    xs = []
+    ys = []
+    fas_ext = []
+    fasc_l = []
+    pennation = []
+    x_low1 = []
+    x_high1 = []
+
     # Compute contours to identify the aponeuroses
-    _, thresh = cv2.threshold(pred_apo_t, 0, 255, cv2.THRESH_BINARY)
+    _, thresh = cv2.threshold(pred_apo_t, 0, 255, cv2.THRESH_BINARY) 
     thresh = thresh.astype('uint8')
     contours, hierarchy = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
@@ -148,7 +177,7 @@ def doCalculations(h: str, w: str, calibDist: int, spacing: int,
             ally.append(ptsT[a][0,1])
         app = np.array(list(zip(allx,ally)))
         contours_re2.append(app)
-
+        
     # Merge nearby contours
     # countU = 0
     xs1 = []
@@ -162,7 +191,7 @@ def doCalculations(h: str, w: str, calibDist: int, spacing: int,
         xs1.append(cnt[0][0])
         xs2.append(cnt[-1][0])
         cv2.drawContours(maskT,[cnt],0,255,-1)
-
+        
     for countU in range(0,len(contours_re2)-1):
         if xs1[countU+1] > xs2[countU]: # Check if x of contour2 is higher than x of contour 1
             y1 = ys2[countU]
@@ -171,10 +200,10 @@ def doCalculations(h: str, w: str, calibDist: int, spacing: int,
                 m = np.vstack((contours_re2[countU], contours_re2[countU+1]))
                 cv2.drawContours(maskT,[m],0,255,-1)
         countU += 1
-
+        
     maskT[maskT > 0] = 1
     skeleton = skeletonize(maskT).astype(np.uint8)
-    kernel = np.ones((3,7), np.uint8)
+    kernel = np.ones((3,7), np.uint8) 
     dilate = cv2.dilate(skeleton, kernel, iterations=15)
     erode = cv2.erode(dilate, kernel, iterations=10)
 
@@ -191,7 +220,7 @@ def doCalculations(h: str, w: str, calibDist: int, spacing: int,
     if len(contoursE) >= 2:
         # Get the x,y coordinates of the upper/lower edge of the 2 aponeuroses
         upp_x,upp_y = contour_edge('B', contoursE[0])
-        if contoursE[1][0,0,1] > contoursE[0][0,0,1] + dic["min_width"]:
+        if contoursE[1][0,0,1] > contoursE[0][0,0,1] + min_width:
             low_x,low_y = contour_edge('T', contoursE[1])
         else:
             low_x,low_y = contour_edge('T', contoursE[2])
@@ -203,6 +232,7 @@ def doCalculations(h: str, w: str, calibDist: int, spacing: int,
         ex_mask = np.zeros(thresh.shape,np.uint8)
         ex_1 = 0
         ex_2 = np.minimum(len(low_x), len(upp_x))
+
         for ii in range(ex_1, ex_2):
             ymin = int(np.floor(upp_y_new[ii]))
             ymax = int(np.ceil(low_y_new[ii]))
@@ -222,7 +252,7 @@ def doCalculations(h: str, w: str, calibDist: int, spacing: int,
         upp_ind = np.where(upp_x==mid)
 
         if upp_ind == len(upp_x):
-            upp_ind -= 1
+                upp_ind -= 1
 
         for val in range(A1, A2):
             if val >= len(low_x):
@@ -251,25 +281,38 @@ def doCalculations(h: str, w: str, calibDist: int, spacing: int,
         new_X_LA = np.linspace(mid-700, mid+700, 5000) # Extrapolate x,y data using f function
         new_Y_LA = h(new_X_LA)
 
+        #########################################################################
+
         # Compute contours to identify fascicles/fascicle orientation
-        _, threshF = cv2.threshold(pred_fasc_t, 0, 255, cv2.THRESH_BINARY)
+        _, threshF = cv2.threshold(pred_fasc_t, 0, 255, cv2.THRESH_BINARY) 
         threshF = threshF.astype('uint8')
         contoursF, hierarchy = cv2.findContours(threshF, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         # Remove any contours that are very small
+    #     contours_re = []
         maskF = np.zeros(threshF.shape,np.uint8)
         for contour in contoursF: # Remove any contours that are very small
-            if len(contour) > dic["fasc_cont_thresh"]:
-                cv2.drawContours(maskF,[contour],0,255,-1)
+            if len(contour) > fasc_cont_thresh:
+    #             contours_re.append(contour)
+                cv2.drawContours(maskF,[contour],0,255,-1) 
 
-        # Only include fascicles within the region of the 2 aponeuroses
-        mask_Fi = maskF & ex_mask
+        # Only include fascicles within the region of the 2 aponeuroses  
+        mask_Fi = maskF & ex_mask 
         contoursF2, hierarchy = cv2.findContours(mask_Fi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
-        #contoursF3 = [i for i in contoursF2 if len(i) > dic["fasc_cont_thresh"]]
+        # maskF = np.zeros(threshF.shape,np.uint8)
+    #     contoursF3 = []
+    #     for contour in contoursF2:
+    #         if len(contour) > fasc_cont_thresh:
+    #     #         cv2.drawContours(maskF,[contour],0,255,-1)
+    #             contoursF3.append(contour)
+        contoursF3 = [i for i in contoursF2 if len(i) > fasc_cont_thresh]
 
         fig = plt.figure(figsize=(25,25))
 
+        xs = []
+        ys = []
+        fas_ext = []
         fasc_l = []
         pennation = []
         x_low1 = []
@@ -307,23 +350,25 @@ def doCalculations(h: str, w: str, calibDist: int, spacing: int,
                 FascAng = float(np.arctan((coordsX[0]-coordsX[-1])/(new_Y_LA[locL]-new_Y_UA[locU]))*180/np.pi)*-1
                 ActualAng = Apoangle-FascAng
 
-                if ActualAng <= dic["max_pennation"] and ActualAng >= dic["min_pennation"]: # Don't include 'fascicles' beyond a range of pennation angles
+                if ActualAng <= max_pennation and ActualAng >= min_pennation: # Don't include 'fascicles' beyond a range of pennation angles
                     length1 = np.sqrt((newX[locU] - newX[locL])**2 + (y_UA[locU] - y_LA[locL])**2)
                     fasc_l.append(length1[0]) # Calculate fascicle length
                     pennation.append(Apoangle-FascAng)
                     x_low1.append(coordsX[0].astype('int32'))
                     x_high1.append(coordsX[-1].astype('int32'))
-                    #coords = np.array(list(zip(coordsX.astype('int32'), coordsY.astype('int32'))))
+                    coords = np.array(list(zip(coordsX.astype('int32'), coordsY.astype('int32'))))
                     plt.plot(coordsX,coordsY,':w', linewidth = 6)
         # cv2.polylines(imgT, [coords], False, (20, 15, 200), 3)
 
+        #########################################################################
         # DISPLAY THE RESULTS
-        #plt.imshow(img_copy, cmap='gray')
+
+        plt.imshow(img_copy, cmap='gray')
         plt.plot(low_x,low_y_new, marker='p', color='w', linewidth = 15) # Plot the aponeuroses
         plt.plot(upp_x,upp_y_new, marker='p', color='w', linewidth = 15)
-
+        
         xplot = 125
-        yplot = 700
+        yplot = 250
 
         # Store the results for each frame and normalise using scale factor (if calibration was done above)
         try:
@@ -331,13 +376,20 @@ def doCalculations(h: str, w: str, calibDist: int, spacing: int,
         except:
             midthick = mindist
 
-        fasc_l = fasc_l / (calibDist/spacing)
-        midthick = midthick / (calibDist/spacing)
+        if 'calibDist' in locals():
+            fasc_l = fasc_l / (calibDist/int(spacing))
+            midthick = midthick / (calibDist/int(spacing))
 
-        plt.text(xplot, yplot, ('Fascicle length: ' + str('%.2f' % np.median(fasc_l)) + ' mm'), fontsize=26, color='white')
-        plt.text(xplot, yplot+50, ('Pennation angle: ' + str('%.1f' % np.median(pennation)) + ' deg'), fontsize=26, color='white')
-        plt.text(xplot, yplot+100, ('Thickness at centre: ' + str('%.1f' % midthick) + ' mm'), fontsize=26, color='white')
-        plt.grid(False)
+            plt.text(xplot, yplot, ('Fascicle length: ' + str('%.2f' % np.median(fasc_l)) + ' mm'), fontsize=26, color='white')
+            plt.text(xplot, yplot+50, ('Pennation angle: ' + str('%.1f' % np.median(pennation)) + ' deg'), fontsize=26, color='white')
+            plt.text(xplot, yplot+100, ('Thickness at centre: ' + str('%.1f' % midthick) + ' mm'), fontsize=26, color='white')
+            plt.grid(False)
+
+        else:
+            plt.text(xplot, yplot, ('Fascicle length: ' + str('%.1f' % np.median(fasc_l)) + ' px'), fontsize=26, color='white')
+            plt.text(xplot, yplot+50, ('Pennation angle: ' + str('%.1f' % np.median(pennation)) + ' deg'), fontsize=26, color='white')
+            plt.text(xplot, yplot+100, ('Thickness at centre: ' + str('%.1f' % midthick) + ' px'), fontsize=26, color='white')
+            plt.grid(False)
 
         return fasc_l, pennation, x_low1, x_high1, midthick, fig
 
