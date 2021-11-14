@@ -2,6 +2,7 @@
 
 This GUI for the DL_Track tool aims to enable the analysis of image batches or folders as well as automated scaling of the input images. 
 It is built completely upon DL_Track and uses pythons tkinter. Note that the color scheme is based on subjective preferences (if it's too bad, I'll change it 😄).
+So far, only images can be analysed using the GUI, not videos.
 
 ## Starting the GUI
 
