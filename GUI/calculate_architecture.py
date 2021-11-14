@@ -1,6 +1,6 @@
 """Python module to evaluate longitudinal US images"""
 
-from __future__ import division
+#from __future__ import division
 
 import warnings
 import time
@@ -10,12 +10,13 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-from matplotlib.backends.backend_pdf import PdfPages
 from skimage.transform import resize
 from keras.preprocessing.image import img_to_array, load_img
 from do_calculations import doCalculations
 from calibrate import calibrateDistanceStatic, calibrateDistanceManually
-
+from matplotlib.backends.backend_pdf import PdfPages
+plt.style.use("ggplot")
+plt.switch_backend("agg")
 
 def importAndReshapeImage(pathToImage, flip):
     """Define the image to analyse, import and reshape the image.
@@ -142,7 +143,7 @@ def calculateBatch(rootpath: str, apo_modelpath: str, fasc_modelpath: str, flipF
         if len(listOfFiles) == len(flipFlags):
 
             try:
-            #start_time = time.time()
+                start_time = time.time()
 
                 for imagepath in listOfFiles:
                     if gui.should_stop:
@@ -168,7 +169,8 @@ def calculateBatch(rootpath: str, apo_modelpath: str, fasc_modelpath: str, flipF
 
                         # predict apos and fasicles
                         fasc_l, pennation, x_low1, x_high1, midthick, fig = doCalculations(img, img_copy, height, width, calibDist,
-                                                                                           spacing, apo_modelpath, fasc_modelpath, dic)
+                                                                                           spacing, apo_modelpath, fasc_modelpath, scale_statement,
+                                                                                           dic)
 
                         if fasc_l is None:
                             fail = f"No two aponeuroses found in {imagepath}"
@@ -178,11 +180,12 @@ def calculateBatch(rootpath: str, apo_modelpath: str, fasc_modelpath: str, flipF
 
                     else:
                         calibrate_fn = calibrateDistanceManually
-                        calibDist = calibrate_fn(nonflipped_img, spacing)
+                        calibDist, scale_statement = calibrate_fn(nonflipped_img, spacing)
 
                         # predict Apos and fasicles
                         fasc_l, pennation, x_low1, x_high1, midthick, fig = doCalculations(img, img_copy, height, width, calibDist,
-                                                                                           spacing, apo_modelpath, fasc_modelpath, dic)
+                                                                                           spacing, apo_modelpath, fasc_modelpath, scale_statement,
+                                                                                           dic)
 
                         if fasc_l is None:
                             fail = f"No two aponeuroses found in {imagepath}"
@@ -201,8 +204,8 @@ def calculateBatch(rootpath: str, apo_modelpath: str, fasc_modelpath: str, flipF
                     pdf.savefig(fig)
                     plt.close(fig)
                     # time duration of analysis of single image
-                    #duration = time.time() - start_time
-                    #print(f"duration: {duration}")
+                    duration = time.time() - start_time
+                    print(f"duration: {duration}")
 
             finally:
                 # save predicted area results

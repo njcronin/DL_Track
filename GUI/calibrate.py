@@ -64,8 +64,9 @@ def calibrateDistanceManually(nonflipped_img, spacing):
         calib_dist = calib_dist / 2
 
     # print(str(spacing) + ' mm corresponds to ' + str(calib_dist) + ' pixels')
+    scale_statement = '10 mm corresponds to ' + str(calib_dist) + ' pixels'
 
-    return calib_dist
+    return calib_dist, scale_statement
 
 
 ## Scaling bars
@@ -98,16 +99,8 @@ def calibrateDistanceStatic(nonflipped_img, spacing: str):
     if int(calib_dist) < 1:
         return None, None, None
 
-    # calculate calib_dist for 10mm
-    if spacing == "5":
-        calib_dist = calib_dist * 2
-    if spacing == "15":
-        calib_dist = calib_dist * (2/3)
-    if spacing == "20":
-        calib_dist = calib_dist / 2
-
     #scalingline_length = depth * calib_dist
-    scale_statement = '10 mm corresponds to ' + str(calib_dist) + ' pixels'
+    scale_statement = f'{spacing} mm corresponds to {calib_dist} pixels'
 
     return calib_dist, imgscale, scale_statement
     

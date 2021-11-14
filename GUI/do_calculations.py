@@ -1,19 +1,15 @@
 """Python function to calculate aponeurosis and fascicles"""
 
-from __future__ import division
 from skimage.morphology import skeletonize
-from scipy.signal import savgol_filter
-from apo_model_long import ApoModels
-from cv2 import arcLength, findContours, RETR_LIST, CHAIN_APPROX_SIMPLE
 from skimage.transform import resize
-from skimage import morphology, measure
+from scipy.signal import savgol_filter
 from keras import backend as K
-from keras.models import load_model 
- 
-import tensorflow as tf
+from keras.models import load_model
+
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+import tensorflow as tf
 plt.style.use("ggplot")
 
 
@@ -28,9 +24,9 @@ def IoU(y_true, y_pred, smooth=1):
     Returns:
         Intersection over union scores.
     """
-    intersection = K.sum(K.abs(y_true * y_pred), axis=-1)
-    union = K.sum(y_true, -1) + K.sum(y_pred, -1) - intersection
-    iou = (intersection + smooth) / (union + smooth)
+    intersect = K.sum(K.abs(y_true * y_pred), axis=-1)
+    union = K.sum(y_true, -1) + K.sum(y_pred, -1) - intersect
+    iou = (intersect + smooth) / (union + smooth)
     return iou
 
 def sort_contours(cnts):
@@ -102,7 +98,7 @@ def distFunc(x1, y1, x2, y2):
     return np.sqrt(xdist + ydist)
 
 def doCalculations(img, img_copy, h: str, w: str, calibDist: int, spacing: int,
-                   apo_modelpath: str, fasc_modelpath: str, dictionary: dict):
+                   apo_modelpath: str, fasc_modelpath: str, scale_statement: str, dictionary: dict):
     """Function to compute aponeuroses and fasicles.
 
     Arguments:
@@ -113,6 +109,7 @@ def doCalculations(img, img_copy, h: str, w: str, calibDist: int, spacing: int,
         Actual distance between scaling lines (mm),
         Image with predicted Aponeuroses,
         Image with predicted Fasicles,
+        Scaling results
         Dictionary with analysis settings.
     """
     # Get settings
@@ -177,7 +174,7 @@ def doCalculations(img, img_copy, h: str, w: str, calibDist: int, spacing: int,
             ally.append(ptsT[a][0,1])
         app = np.array(list(zip(allx,ally)))
         contours_re2.append(app)
-        
+
     # Merge nearby contours
     # countU = 0
     xs1 = []
@@ -191,7 +188,7 @@ def doCalculations(img, img_copy, h: str, w: str, calibDist: int, spacing: int,
         xs1.append(cnt[0][0])
         xs2.append(cnt[-1][0])
         cv2.drawContours(maskT,[cnt],0,255,-1)
-        
+
     for countU in range(0,len(contours_re2)-1):
         if xs1[countU+1] > xs2[countU]: # Check if x of contour2 is higher than x of contour 1
             y1 = ys2[countU]
@@ -200,10 +197,10 @@ def doCalculations(img, img_copy, h: str, w: str, calibDist: int, spacing: int,
                 m = np.vstack((contours_re2[countU], contours_re2[countU+1]))
                 cv2.drawContours(maskT,[m],0,255,-1)
         countU += 1
-        
+
     maskT[maskT > 0] = 1
     skeleton = skeletonize(maskT).astype(np.uint8)
-    kernel = np.ones((3,7), np.uint8) 
+    kernel = np.ones((3,7), np.uint8)
     dilate = cv2.dilate(skeleton, kernel, iterations=15)
     erode = cv2.erode(dilate, kernel, iterations=10)
 
@@ -294,10 +291,10 @@ def doCalculations(img, img_copy, h: str, w: str, calibDist: int, spacing: int,
         for contour in contoursF: # Remove any contours that are very small
             if len(contour) > fasc_cont_thresh:
     #             contours_re.append(contour)
-                cv2.drawContours(maskF,[contour],0,255,-1) 
+                cv2.drawContours(maskF,[contour],0,255,-1)
 
-        # Only include fascicles within the region of the 2 aponeuroses  
-        mask_Fi = maskF & ex_mask 
+        # Only include fascicles within the region of the 2 aponeuroses
+        mask_Fi = maskF & ex_mask
         contoursF2, hierarchy = cv2.findContours(mask_Fi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
         # maskF = np.zeros(threshF.shape,np.uint8)
@@ -360,15 +357,14 @@ def doCalculations(img, img_copy, h: str, w: str, calibDist: int, spacing: int,
                     plt.plot(coordsX,coordsY,':w', linewidth = 6)
         # cv2.polylines(imgT, [coords], False, (20, 15, 200), 3)
 
-        #########################################################################
         # DISPLAY THE RESULTS
-
         plt.imshow(img_copy, cmap='gray')
+        plt.title(str(scale_statement), fontsize=20)
         plt.plot(low_x,low_y_new, marker='p', color='w', linewidth = 15) # Plot the aponeuroses
         plt.plot(upp_x,upp_y_new, marker='p', color='w', linewidth = 15)
-        
+
         xplot = 125
-        yplot = 250
+        yplot = 700
 
         # Store the results for each frame and normalise using scale factor (if calibration was done above)
         try:
@@ -376,23 +372,22 @@ def doCalculations(img, img_copy, h: str, w: str, calibDist: int, spacing: int,
         except:
             midthick = mindist
 
-        if 'calibDist' in locals():
-            fasc_l = fasc_l / (calibDist/int(spacing))
-            midthick = midthick / (calibDist/int(spacing))
+        fasc_l = fasc_l / (calibDist/int(spacing))
+        midthick = midthick / (calibDist/int(spacing))
 
-            plt.text(xplot, yplot, ('Fascicle length: ' + str('%.2f' % np.median(fasc_l)) + ' mm'), fontsize=26, color='white')
-            plt.text(xplot, yplot+50, ('Pennation angle: ' + str('%.1f' % np.median(pennation)) + ' deg'), fontsize=26, color='white')
-            plt.text(xplot, yplot+100, ('Thickness at centre: ' + str('%.1f' % midthick) + ' mm'), fontsize=26, color='white')
-            plt.grid(False)
+        plt.text(xplot, yplot, ('Fascicle length: ' + str('%.2f' % np.median(fasc_l)) + ' mm'), fontsize=15, color='white')
+        plt.text(xplot, yplot+50, ('Pennation angle: ' + str('%.1f' % np.median(pennation)) + ' deg'), fontsize=15, color='white')
+        plt.text(xplot, yplot+100, ('Thickness at centre: ' + str('%.1f' % midthick) + ' mm'), fontsize=15, color='white')
+        plt.grid(False)
 
-        else:
-            plt.text(xplot, yplot, ('Fascicle length: ' + str('%.1f' % np.median(fasc_l)) + ' px'), fontsize=26, color='white')
-            plt.text(xplot, yplot+50, ('Pennation angle: ' + str('%.1f' % np.median(pennation)) + ' deg'), fontsize=26, color='white')
-            plt.text(xplot, yplot+100, ('Thickness at centre: ' + str('%.1f' % midthick) + ' px'), fontsize=26, color='white')
-            plt.grid(False)
+        # clear session so tf does not complain
+        K.clear_session()
 
         return fasc_l, pennation, x_low1, x_high1, midthick, fig
 
     else:
+
+        # clear session so tf does not complain
+        K.clear_session()
         return None, None, None, None, None, None
     

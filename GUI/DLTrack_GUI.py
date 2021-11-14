@@ -1,10 +1,8 @@
 """Python module to create GUI for DL_Track"""
 
-import os
 from tkinter import StringVar, Tk, N, S, W, E
 from tkinter import ttk, filedialog
 from tkinter.tix import *
-#import tensorflow as tf
 from threading import Thread, Lock
 from PIL import Image
 from calculate_architecture import calculateBatch
@@ -142,7 +140,9 @@ class DLTrack:
         self.spacing.set(10)
         # Apo threshold
         self.apo_threshold = StringVar()
+        athresh = (0.1, 0.3, 0.5, 0.7, 0.9)
         apo_entry = ttk.Combobox(main, width=10, textvariable=self.apo_threshold)
+        apo_entry["values"] = athresh
         apo_entry.grid(column=2, row=12, sticky=(W,E))
         tip.bind_widget(apo_entry,
                         balloonmsg="Choose or enter threshold used" +
@@ -150,7 +150,9 @@ class DLTrack:
         self.apo_threshold.set(0.8)
         # Fasc threshold
         self.fasc_threshold = StringVar()
+        fthresh = [0.1, 0.3, 0.5]
         fasc_entry = ttk.Combobox(main, width=10, textvariable=self.fasc_threshold)
+        fasc_entry["values"] = fthresh
         fasc_entry.grid(column=2, row=13, sticky=(W,E))
         tip.bind_widget(fasc_entry,
                         balloonmsg="Choose or enter threshold used" +
@@ -158,7 +160,7 @@ class DLTrack:
         self.fasc_threshold.set(0.1)
         # Fasc cont threshold
         self.fasc_cont_threshold = StringVar()
-        fcthresh = range(20, 70, 10)
+        fcthresh = (20, 30, 40, 50, 60, 70, 80)
         fasc_cont_entry = ttk.Combobox(main, width=10, textvariable=self.fasc_cont_threshold)
         fasc_cont_entry["values"] = fcthresh
         fasc_cont_entry.grid(column=2, row=14, sticky=(W,E))
@@ -168,7 +170,7 @@ class DLTrack:
         self.fasc_cont_threshold.set(40)
         # Minimal width
         self.min_width = StringVar()
-        mwidth = range(20, 100, 20)
+        mwidth = (20, 30, 40, 50, 60, 70, 80, 90, 100)
         width_entry = ttk.Combobox(main, width=10, textvariable=self.min_width)
         width_entry["values"] = mwidth
         width_entry.grid(column=2, row=15, sticky=(W,E))
@@ -297,7 +299,6 @@ class DLTrack:
         flipflag_dir = filedialog.askopenfilename()
         self.flipflag.set(flipflag_dir)
         return flipflag_dir
-
 
     def run_code(self):
         """ The code is run upon clicking.
